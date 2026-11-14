@@ -13,11 +13,15 @@ import sys
 import time
 from pathlib import Path
 
-from PySide6.QtCore import (QEasingCurve, QEvent, QFileInfo, QLockFile, QMimeData, QPointF,
+from . import theme
+
+theme.install()  # ДО остальных импортов: подгоняет «зашитые» цвета интерфейса под выбранную тему
+
+from PySide6.QtCore import (QEasingCurve, QEvent, QFileInfo, QLockFile, QMimeData, QPoint, QPointF,
                             QPropertyAnimation, QRect, QRectF, Qt, QTimer, QUrl, QVariantAnimation, Signal)
 from PySide6.QtGui import (QAction, QColor, QConicalGradient, QCursor, QDesktopServices, QDrag,
                            QFont, QFontMetrics, QGuiApplication, QIcon, QPainter, QPainterPath,
-                           QPen, QPixmap)
+                           QPen, QPixmap, QRegion)
 from PySide6.QtWidgets import (QApplication, QFileIconProvider, QGraphicsOpacityEffect,
                                QFrame, QGridLayout, QHBoxLayout, QLabel, QMenu, QPushButton, QScrollArea,
                                QStackedWidget, QSystemTrayIcon, QVBoxLayout, QWidget)
@@ -25,6 +29,7 @@ from PySide6.QtWidgets import (QApplication, QFileIconProvider, QGraphicsOpacity
 from . import common as C
 from .mascots import draw_mascot, set_repo_color
 from .island_clip import ClipPage, ClipStore
+from .island_downloads import DownloadWatcher
 from .island_extras import LyricsEngine, LyricsPage, draw_eq, mix
 from .island_mixer import MixerPage
 from .island_rec import RecordPage
@@ -110,21 +115,23 @@ class ClickRipple(QWidget):
             e = 1 - (1 - k) ** 3
             fade = (1 - k) ** 1.5
             rad = 4 + (rmax - 4) * e
-            fill = QColor(255, 255, 255, int(46 * fade))
-            ring = QColor(255, 255, 255, int(150 * fade))
+            fr, fg_, fb = theme.fg_rgb()
+            fill = QColor(fr, fg_, fb, int(46 * fade))
+            ring = QColor(fr, fg_, fb, int(150 * fade))
             p.setBrush(fill)
             p.setPen(QPen(ring, 1.6))
             p.drawEllipse(QPointF(x, y), rad, rad)
 
 
 class RevealOverlay(QWidget):
-    """Переключение вкладки кругом: новая страница уже лежит под этим слоем, а снимок старой «стирается»
-    кругом, который растёт от места клика. По краю круга бежит тонкое цветное кольцо."""
+    """Переключение вкладки кругом. Новая страница видна только внутри круга, который растёт от места клика
+    (остальное у неё «обрезано» маской), а снаружи этот слой дорисовывает прозрачный снимок старой страницы.
+    Никакой заливки нет — под ними всегда настоящий фон острова, в любой теме. По краю круга бежит кольцо."""
 
     def __init__(self, parent):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self.pm, self.origin, self.r, self.r_max = None, QPointF(), 0.0, 1.0
+        self.pm, self.origin, self.r, self.r_max, self.target = None, QPointF(), 0.0, 1.0, None
         self.color = QColor("#ffffff")
         self.anim = QVariantAnimation(self)
         self.anim.setDuration(440)
@@ -135,23 +142,36 @@ class RevealOverlay(QWidget):
         self.anim.finished.connect(self.stop)
         self.hide()
 
-    def play(self, pm, origin, rect, color):
+    def play(self, pm, origin, rect, color, target):
         self.anim.stop()
+        self.target = target
         self.setGeometry(rect)
         self.pm, self.origin, self.color, self.r = pm, QPointF(origin), QColor(color), 0.0
         w, h = rect.width(), rect.height()
         self.r_max = max(math.hypot(cx - origin.x(), cy - origin.y()) for cx, cy in ((0, 0), (w, 0), (0, h), (w, h))) + 6
+        self._apply_mask()
         self.show()
         self.raise_()
         self.anim.start()
 
+    def _apply_mask(self):
+        """Показываем новую страницу только внутри круга (пустая маска у Qt = «без маски», поэтому минимум 2 px)."""
+        if self.target is None:
+            return
+        r = max(2, int(self.r))
+        self.target.setMask(QRegion(int(self.origin.x()) - r, int(self.origin.y()) - r, 2 * r, 2 * r,
+                                    QRegion.RegionType.Ellipse))
+
     def stop(self):
         self.anim.stop()
         self.pm = None
+        if self.target is not None:
+            self.target.clearMask()
         self.hide()
 
     def _step(self, t):
         self.r = float(t) * self.r_max
+        self._apply_mask()
         self.update()
 
     def paintEvent(self, _):
@@ -564,6 +584,8 @@ class Island(QWidget):
         self.setAcceptDrops(True)
 
         self.cfg = C.load_config()
+        self._theme = C.resolve_theme(self.cfg)
+        self.restart_cb = None   # main() подставляет сюда перезапуск острова (нужен при смене цвета темы)
         self._mtime = C.config_mtime()
         self.expanded = False
         self._angle = 45.0
@@ -577,6 +599,7 @@ class Island(QWidget):
         self.lyrics = LyricsEngine()            # Live Lyrics
         self.clip = ClipStore()                 # история буфера обмена
         self.weather = WeatherService()         # погода
+        self.downloads = DownloadWatcher()      # загрузки в браузере
         self.home = QGuiApplication.primaryScreen()   # монитор, где сейчас настоящий остров
         self.mirrors = {}                       # QScreen → IslandMirror (режим «на всех»)
         self._ly_state = (-2, "", 0.0)          # (индекс строки, текст, прогресс)
@@ -709,12 +732,14 @@ class Island(QWidget):
         self.banner.hide()
 
     def _snapshot_stack(self):
-        """Снимок текущей страницы на чёрном фоне — для круговой анимации."""
+        """Снимок текущей страницы на ПРОЗРАЧНОМ фоне — для круговой анимации."""
         dpr = self.stack.devicePixelRatioF()
         pm = QPixmap(max(1, int(self.stack.width() * dpr)), max(1, int(self.stack.height() * dpr)))
         pm.setDevicePixelRatio(dpr)
-        pm.fill(QColor(0, 0, 0))
-        self.stack.render(pm)
+        pm.fill(Qt.GlobalColor.transparent)
+        # без DrawWindowBackground: по умолчанию render() подкладывает цвет окна из палитры Windows (тёмно-серый),
+        # и старая страница на время анимации становилась чёрной вместо фона темы
+        self.stack.render(pm, QPoint(), QRegion(), QWidget.RenderFlag.DrawChildren)
         return pm
 
     def show_page(self, key, animate=False):
@@ -727,7 +752,7 @@ class Island(QWidget):
         self.stack.setCurrentWidget(self.pages[key])
         if ripple:
             cols = C.border_colors(self.cfg)
-            self.reveal.play(snap, origin, self.stack.geometry(), "#8b7cf6" if C.is_black(cols) else cols[0])
+            self.reveal.play(snap, origin, self.stack.geometry(), "#8b7cf6" if C.is_black(cols) else cols[0], self.stack)
             if self.banner.isVisible():
                 self.banner.raise_()
         for k, (b, icon, title) in self.tabs.items():
@@ -746,6 +771,8 @@ class Island(QWidget):
     # ---- конфиг
     def apply_config(self):
         mods = self.cfg["modules"]
+        self._theme = C.resolve_theme(self.cfg)
+        self.downloads.configure(bool(self.cfg.get("downloads_on", True)), self.cfg.get("downloads_dir", ""))
         for key, (b, _, _) in self.tabs.items():
             b.setVisible(mods.get(key, True))
         enabled = [k for k in self.tabs if mods.get(k, True)]
@@ -778,10 +805,19 @@ class Island(QWidget):
         self.update()
 
     def _tick_cfg(self):
+        if C.QUIT_FLAG.exists():  # в настройках нажали «Выйти»
+            try:
+                C.QUIT_FLAG.unlink()
+            except Exception:
+                pass
+            QApplication.instance().quit()
+            return
         m = C.config_mtime()
         if m != self._mtime:
             self._mtime = m
             self.cfg = C.load_config()
+            if self.restart_cb is not None and theme.base_changed(self.cfg) and self.restart_cb():
+                return   # цвет фона/текста темы зашит при запуске — остров перезапускается сам
             self.apply_config()
 
     def _tick_clock(self):
@@ -857,8 +893,10 @@ class Island(QWidget):
             return (LYR_W + 30, 40) if notch else (LYR_W, 46)
         # ширина всегда как у острова с часами, даже если часы скрыты — остров не «схлопывается»
         base, act = self.rest_text(), self._activity()
-        if act and len(act[0]) > len(base):
-            base = act[0]
+        if act:
+            txt = max(act[0], "00.0 МБ/с", key=len) if act[2] == "dl" else act[0]
+            if len(txt) > len(base):
+                base = txt
         adv = QFontMetrics(self._rest_font()).horizontalAdvance(base.replace("1", "0"))
         extra = (30 if (mascot and show_time) else 0) + (18 if act else 0)
         return (adv + 70 + extra, 32) if notch else (adv + 44 + extra, 36)
@@ -999,6 +1037,9 @@ class Island(QWidget):
             hh, rest = divmod(sec, 3600)
             mm, ss = divmod(rest, 60)
             items.append((f"{hh}:{mm:02d}:{ss:02d}" if hh else f"{mm:02d}:{ss:02d}", "#30d158", "sw", 0.0))
+        dl = self.downloads.activity() if self.cfg.get("downloads_on", True) else None
+        if dl:  # браузер что-то качает (или только что докачал)
+            items.append(dl)
         if not items:
             return None
         return items[int(time.time() // 3) % len(items)]
@@ -1018,6 +1059,24 @@ class Island(QWidget):
         if kind == "timer":
             p.setPen(QPen(c, 2.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
             p.drawArc(ring, 90 * 16, -int(max(0.03, min(1.0, frac)) * 360 * 16))
+        elif kind == "dl":  # вращающаяся дуга со стрелкой «вниз»
+            p.setPen(QPen(c, 2.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            p.drawArc(ring, -int((time.time() * 300) % 360 * 16), 100 * 16)
+            mx = x + 7
+            p.setPen(QPen(c, 1.3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            p.drawLine(QPointF(mx, cy - 2.3), QPointF(mx, cy + 1.8))
+            p.drawLine(QPointF(mx - 2.1, cy - 0.3), QPointF(mx, cy + 1.9))
+            p.drawLine(QPointF(mx + 2.1, cy - 0.3), QPointF(mx, cy + 1.9))
+        elif kind == "dl_done":  # зелёный кружок с галочкой
+            fill = QColor(c)
+            fill.setAlpha(70)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(fill)
+            p.drawEllipse(ring)
+            mx = x + 7
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(c, 1.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            p.drawPolyline([QPointF(mx - 2.6, cy + 0.2), QPointF(mx - 0.8, cy + 2.1), QPointF(mx + 2.7, cy - 1.9)])
         else:
             dot = QColor(c)
             dot.setAlpha(int(140 + 115 * (0.5 + 0.5 * math.sin(time.time() * 5))))
@@ -1114,6 +1173,7 @@ class Island(QWidget):
         p.restore()
 
     def shutdown(self):
+        self.downloads.stop()
         for m in self.mirrors.values():
             m.close()
         self.rec_page.shutdown()
@@ -1264,8 +1324,10 @@ class Island(QWidget):
         path = QPainterPath()
         path.addRoundedRect(rect, r, r)
 
-        alpha = round(255 * max(50, min(100, int(self.cfg["opacity"]))) / 100)
-        p.fillPath(path, QColor(0, 0, 0, alpha))
+        tm = self._theme
+        theme.paint_surface(p, path, QRectF(0, 0, w, h), tm, self.cfg["opacity"],
+                            glow_color=tm["glow_color"] if tm["glow"] else None,
+                            edge=(not rim and theme.is_light(tm["bg"])))
 
         if rim:
             grad = QConicalGradient(QPointF(w / 2, h / 2), self._angle if self.cfg["moving_gradient"] else 45)
@@ -1330,8 +1392,27 @@ def main():
     if not lock.tryLock(200):
         return 0  # остров уже запущен
 
+    try:  # старый флаг «выйти» (если остров закрыли иначе) не должен убить свежий запуск
+        C.QUIT_FLAG.unlink()
+    except Exception:
+        pass
     island = Island()
     app.aboutToQuit.connect(island.shutdown)
+
+    def restart():
+        """Перезапуск острова: нужен, когда сменился цвет фона или текста темы."""
+        lock.unlock()  # освобождаем замок, чтобы новый экземпляр запустился
+        try:
+            subprocess.Popen([sys.executable, "-m", __package__ or "astro_island"],
+                             creationflags=0x08000000 if os.name == "nt" else 0)
+        except Exception as e:
+            print("Не удалось перезапустить остров:", e)
+            lock.tryLock(100)  # не вышло — продолжаем работать со старыми цветами
+            return False
+        app.quit()
+        return True
+
+    island.restart_cb = restart
 
     tray = QSystemTrayIcon(make_tray_icon(), app)
     tray.setToolTip("Dynamic Island by ASTRO")

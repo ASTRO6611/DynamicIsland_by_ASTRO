@@ -8,6 +8,8 @@ import time
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QPainterPath, QPen
 
+from . import theme
+
 
 def _ell(p, x, y, rx, ry, color):
     p.setPen(Qt.PenStyle.NoPen)
@@ -28,11 +30,14 @@ def _poly(p, pts, color):
 
 # ───────── обычные ─────────
 def _eyes(p, cx, cy, look, blink):
-    """Два белых вертикальных овала, моргают в тонкую линию."""
+    """Два вертикальных овала, моргают в тонкую линию. На светлой теме — чёрные, на тёмной — белые."""
     h = max(1.4, 11.5 * (1 - 0.88 * blink))
     w = 5.8
     p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(QColor("#f5f5f7"))
+    r, g, b = theme.bg_rgb()
+    light = (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.58
+    # цвет задан числами, а не строкой: так тема его не перекрашивает (строка «#000000» стала бы цветом фона)
+    p.setBrush(QColor(0, 0, 0) if light else QColor(245, 245, 247))
     for dx in (-4.9, 4.9):
         x = cx + dx + look.x() * 2.4
         y = cy + look.y() * 1.6

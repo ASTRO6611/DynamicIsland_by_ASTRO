@@ -5,13 +5,15 @@
 import os
 import sys
 
-from PySide6.QtCore import QLockFile, QPointF, QRect, QRectF, Qt, QVariantAnimation, Signal
+from PySide6.QtCore import QLockFile, QPointF, QRect, QRectF, Qt, QTimer, QVariantAnimation, Signal
 from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (QAbstractButton, QApplication, QColorDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
                                QLabel, QLineEdit, QPushButton, QScrollArea, QSlider, QStackedWidget,
                                QVBoxLayout, QWidget)
 
 from . import common as C
+from . import theme as T
+from .island_downloads import default_downloads_dir
 from .mascots import MASCOTS, draw_mascot, set_repo_color
 
 QSS = """
@@ -206,6 +208,164 @@ class MascotTile(QAbstractButton):
                 p.drawEllipse(QPointF(c.x() + dx, c.y() + dy), 2.1, 2.1)
 
 
+def _wallpaper(p, rect, radius=14):
+    """Цветной «рабочий стол» под превью — на нём видно прозрачность и стекло."""
+    g = QLinearGradient(rect.topLeft(), rect.bottomRight())
+    g.setColorAt(0, QColor("#3b4a7a"))
+    g.setColorAt(0.55, QColor("#8a4f78"))
+    g.setColorAt(1, QColor("#e0944f"))
+    path = QPainterPath()
+    path.addRoundedRect(rect, radius, radius)
+    p.fillPath(path, g)
+
+
+def _mini_island(p, cfg, th, rect, text, font_px=20):
+    """Маленький остров в теме th: фон, рамка выбранного цвета и текст."""
+    path = QPainterPath()
+    path.addRoundedRect(rect, rect.height() / 2, rect.height() / 2)
+    colors = C.border_colors(cfg)
+    rim = not C.is_black(colors)
+    T.paint_surface(p, path, rect, th, cfg.get("opacity", 100), glow_color=th["glow_color"] if th["glow"] else None,
+                    edge=(not rim and T.is_light(th["bg"])))
+    if rim:
+        g = QLinearGradient(rect.topLeft(), rect.bottomRight())
+        for i, c in enumerate(colors):
+            g.setColorAt(i / max(1, len(colors) - 1), QColor(c))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(g, 2.0))
+        p.drawPath(path)
+    f = QFont("Segoe UI Semibold")
+    f.setPixelSize(font_px)
+    f.setBold(True)
+    p.setFont(f)
+    p.setPen(QColor(th["fg"]))
+    p.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+
+
+class ThemePreview(QWidget):
+    """Живое превью: свёрнутый остров и раскрытая карточка в выбранной теме."""
+
+    def __init__(self, get_cfg):
+        super().__init__()
+        self.get_cfg = get_cfg
+        self.setFixedHeight(172)
+
+    def paintEvent(self, _):
+        cfg = self.get_cfg()
+        th = C.resolve_theme(cfg)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        _wallpaper(p, QRectF(0, 0, w, h))
+        pw = min(w - 48, 340)
+        x = (w - pw) / 2
+        _mini_island(p, cfg, th, QRectF(x, 18, pw, 44), "12:34:56", 19)
+        card = QRectF(x - 14, 76, pw + 28, 80)  # «раскрытый» остров с вкладками
+        path = QPainterPath()
+        path.addRoundedRect(card, 22, 22)
+        T.paint_surface(p, path, card, th, cfg.get("opacity", 100),
+                        glow_color=th["glow_color"] if th["glow"] else None,
+                        edge=T.is_light(th["bg"]))
+        fg = QColor(th["fg"])
+        f = QFont("Segoe UI")
+        f.setPixelSize(13)
+        f.setBold(True)
+        p.setFont(f)
+        tabs = ["Часы", "Таймер", "Музыка", "Буфер"]
+        tw = (card.width() - 32) / len(tabs)
+        for i, name in enumerate(tabs):
+            r = QRectF(card.left() + 16 + i * tw, card.top() + 14, tw - 6, 28)
+            if i == 0:
+                hl = QColor(fg)
+                hl.setAlpha(36)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(hl)
+                p.drawRoundedRect(r, 10, 10)
+            c = QColor(fg)
+            c.setAlpha(255 if i == 0 else 150)
+            p.setPen(c)
+            p.drawText(r, Qt.AlignmentFlag.AlignCenter, name)
+        sub = QColor(fg)
+        sub.setAlpha(120)
+        f.setBold(False)
+        f.setPixelSize(12)
+        p.setFont(f)
+        p.setPen(sub)
+        p.drawText(QRectF(card.left() + 20, card.top() + 48, card.width() - 40, 24),
+                   Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "Сб, 14 ноября · +3° ясно")
+
+
+class ThemeTile(QAbstractButton):
+    """Карточка готовой темы с мини-превью."""
+
+    def __init__(self, key, name, get_cfg):
+        super().__init__()
+        self.key, self.name, self.get_cfg = key, name, get_cfg
+        self.setCheckable(True)
+        self.setFixedSize(176, 112)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def paintEvent(self, _):
+        cfg = self.get_cfg()
+        th = C.resolve_theme({"theme": self.key, "theme_custom": cfg.get("theme_custom")})
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(self.rect()).adjusted(1.5, 1.5, -1.5, -1.5)
+        p.setBrush(QColor("#25252d"))
+        p.setPen(QPen(QColor("#8b7cf6") if self.isChecked() else QColor("#3a3a44"), 2 if self.isChecked() else 1))
+        p.drawRoundedRect(r, 14, 14)
+        _wallpaper(p, QRectF(10, 10, r.width() - 17, 62), 10)
+        _mini_island(p, cfg, th, QRectF(24, 24, r.width() - 45, 34), "12:34", 15)
+        f = QFont("Segoe UI")
+        f.setPixelSize(14)
+        f.setBold(True)
+        p.setFont(f)
+        p.setPen(QColor("#f2f2f7"))
+        p.drawText(QRectF(0, 76, self.width(), 30), Qt.AlignmentFlag.AlignCenter, self.name)
+
+
+class QuitButton(QPushButton):
+    """Кнопка «Выйти»: красный крестик и надпись рисуются самой кнопкой, поэтому видны при любом оформлении окна."""
+
+    def __init__(self, label="Выйти"):
+        super().__init__()
+        self._label, self._hover = label, False
+        self.setFixedHeight(44)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+    def setLabel(self, text):
+        self._label = text
+        self.update()
+
+    def enterEvent(self, e):
+        self._hover = True
+        self.update()
+
+    def leaveEvent(self, e):
+        self._hover = False
+        self.update()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        if self._hover and self.isEnabled():
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor("#2b1618"))
+            p.drawRoundedRect(QRectF(0, 0, w, h), 10, 10)
+        on = self.isEnabled()
+        p.setPen(QPen(QColor("#ff453a" if on else "#7a3a36"), 2.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        cx, cy, d = 26, h / 2, 5.5
+        p.drawLine(QPointF(cx - d, cy - d), QPointF(cx + d, cy + d))
+        p.drawLine(QPointF(cx - d, cy + d), QPointF(cx + d, cy - d))
+        f = QFont("Segoe UI")
+        f.setPixelSize(15)
+        p.setFont(f)
+        p.setPen(QColor("#f2f2f7" if on else "#8e8e93"))
+        p.drawText(QRectF(48, 0, w - 58, h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, self._label)
+
+
 class StylePreview(QWidget):
     def __init__(self, kind):
         super().__init__()
@@ -378,7 +538,7 @@ class SettingsWindow(QWidget):
 
         self.stack = QStackedWidget()
         self.nav = []
-        pages = [("Основные", self._general()), ("Внешний вид", self._appearance()),
+        pages = [("Основные", self._general()), ("Внешний вид", self._appearance()), ("Тема", self._theme()),
                  ("Запись экрана", self._record()), ("Модули", self._modules()), ("О программе", self._about())]
         for i, (name, w) in enumerate(pages):
             b = QPushButton(name)
@@ -390,9 +550,46 @@ class SettingsWindow(QWidget):
             self.nav.append(b)
             self.stack.addWidget(w)
         sl.addStretch()
+        sl.addWidget(self._quit_button())
         root.addWidget(side)
         root.addWidget(self.stack, 1)
         self.go(1)
+
+    # ---- кнопка «Выйти»: закрыть остров полностью
+    def _quit_button(self):
+        self.quit_btn = QuitButton("Выйти")
+        self.quit_btn.clicked.connect(self._quit_island)
+        return self.quit_btn
+
+    def _island_running(self) -> bool:
+        lock = QLockFile(str(C.CFG_DIR / "island.lock"))
+        if lock.tryLock(50):  # замок свободен — остров не запущен
+            lock.unlock()
+            return False
+        return True
+
+    def _quit_island(self):
+        if not self._island_running():
+            self.quit_btn.setLabel("Остров не запущен")
+            QTimer.singleShot(2500, lambda: self.quit_btn.setLabel("Выйти"))
+            return
+        try:
+            C.CFG_DIR.mkdir(parents=True, exist_ok=True)
+            C.QUIT_FLAG.write_text("1")  # остров проверяет этот файл раз в полсекунды
+        except Exception as e:
+            self.quit_btn.setLabel("Не получилось")
+            print("Не удалось отправить команду острову:", e)
+            QTimer.singleShot(2500, lambda: self.quit_btn.setLabel("Выйти"))
+            return
+        self.quit_btn.setEnabled(False)
+        self.quit_btn.setLabel("Закрываю…")
+        QTimer.singleShot(1800, self._after_quit)
+
+    def _after_quit(self):
+        closed = not self._island_running()
+        self.quit_btn.setLabel("Остров закрыт" if closed else "Не отвечает")
+        self.quit_btn.setEnabled(True)
+        QTimer.singleShot(3000, lambda: self.quit_btn.setLabel("Выйти"))
 
     def go(self, i):
         self.stack.setCurrentIndex(i)
@@ -463,6 +660,32 @@ class SettingsWindow(QWidget):
         sn.toggled.connect(lambda v: self.set("alarm_sound", v))
         cl.addWidget(row("Звук таймера и напоминаний", "Сигнал, пока не нажмёшь «Ок» на острове.", sn))
 
+        tdl = Toggle(self.cfg.get("downloads_on", True))
+        tdl.toggled.connect(lambda v: self.set("downloads_on", v))
+        cl.addWidget(row("Загрузки в браузере", "Когда браузер что-то скачивает, остров показывает скорость, а в конце — «готово». "
+                         "Работает с Chrome, Edge, Firefox, Яндекс.Браузером, Opera и другими.", tdl))
+
+        dl_box = QWidget()
+        dl_l = QHBoxLayout(dl_box)
+        dl_l.setContentsMargins(0, 0, 0, 0)
+        dl_l.setSpacing(8)
+        btn_qss = ("QPushButton{background:#3a3a44;border:none;border-radius:8px;padding:7px 14px}"
+                   "QPushButton:hover{background:#4a4a56}")
+        pick_dl = QPushButton("Выбрать…")
+        auto_dl = QPushButton("Авто")
+        for b in (pick_dl, auto_dl):
+            b.setStyleSheet(btn_qss)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            dl_l.addWidget(b)
+        self.dl_dir_lbl = QLabel()
+        self.dl_dir_lbl.setObjectName("desc")
+        self.dl_dir_lbl.setWordWrap(True)
+        pick_dl.clicked.connect(self._pick_dl_dir)
+        auto_dl.clicked.connect(lambda: self._set_dl_dir(""))
+        cl.addWidget(row("Папка загрузок", "Остров следит за этой папкой. Обычно находится сама.", dl_box))
+        cl.addWidget(self.dl_dir_lbl)
+        self._show_dl_dir()
+
         tcp = Toggle(self.cfg["clip_persist"])
         tcp.toggled.connect(lambda v: self.set("clip_persist", v))
         trp = Toggle(self.cfg["tab_ripple"])
@@ -478,6 +701,20 @@ class SettingsWindow(QWidget):
         lay.addWidget(c)
         lay.addStretch()
         return sc
+
+    def _show_dl_dir(self):
+        custom = str(self.cfg.get("downloads_dir") or "").strip()
+        self.dl_dir_lbl.setText(f"Сейчас: {custom or default_downloads_dir()}" + ("" if custom else "   (найдена автоматически)"))
+
+    def _set_dl_dir(self, path):
+        self.set("downloads_dir", path)
+        self._show_dl_dir()
+
+    def _pick_dl_dir(self):
+        start = str(self.cfg.get("downloads_dir") or default_downloads_dir())
+        d = QFileDialog.getExistingDirectory(self, "Папка, куда браузер сохраняет загрузки", start)
+        if d:
+            self._set_dl_dir(d)
 
     # ---- Внешний вид
     def _appearance(self):
@@ -644,6 +881,147 @@ class SettingsWindow(QWidget):
             C.save_config(self.cfg)
             self.custom_sw.colors = C.border_colors(self.cfg)
             self._refresh_border_ui()
+
+    # ---- Тема
+    def _theme(self):
+        sc, lay = page("Тема")
+        c, cl = card()
+        t = QLabel("Тема острова")
+        t.setObjectName("rowt")
+        d = QLabel("Готовые Чёрная и Белая — или собери свою: цвета, градиент, стекло и подсветку.")
+        d.setObjectName("desc")
+        cl.addWidget(t)
+        cl.addWidget(d)
+        self.theme_preview = ThemePreview(lambda: self.cfg)
+        cl.addWidget(self.theme_preview)
+        tiles = QHBoxLayout()
+        tiles.setSpacing(12)
+        self.theme_tiles = {}
+        for key, name in (("black", "Чёрная"), ("white", "Белая"), ("custom", "Своя")):
+            tile = ThemeTile(key, name, lambda: self.cfg)
+            tile.setChecked(self.cfg.get("theme") == key)
+            tile.clicked.connect(lambda _=False, k=key: self._pick_theme(k))
+            self.theme_tiles[key] = tile
+            tiles.addWidget(tile)
+        tiles.addStretch()
+        cl.addLayout(tiles)
+        note = QLabel("Когда меняется цвет фона или текста, остров на секунду перезапускается — так цвета всего интерфейса "
+                      "подстраиваются под тему. Остальное (градиент, стекло, подсветка) применяется сразу.")
+        note.setObjectName("desc")
+        note.setWordWrap(True)
+        cl.addWidget(note)
+        lay.addWidget(c)
+
+        self.custom_card, cc = card()
+        ct = QLabel("Своя тема")
+        ct.setObjectName("rowt")
+        cc.addWidget(ct)
+        self._color_btns = {}
+
+        def tc(key):
+            return self.cfg["theme_custom"].get(key, C.CUSTOM_THEME_DEFAULT[key])
+
+        def color_row(key, title, desc, dialog_title):
+            b = QPushButton()
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setFixedWidth(120)
+            self._color_btns[key] = b
+            b.clicked.connect(lambda: self._pick_theme_color(key, dialog_title))
+            self._style_color_btn(key)
+            return row(title, desc, b)
+
+        def toggle_row(key, title, desc):
+            tg = Toggle(bool(tc(key)))
+            tg.toggled.connect(lambda v: self._set_tc(key, v))
+            return row(title, desc, tg)
+
+        def slider_row(key, title, desc):
+            lab = QLabel(f"{tc(key)}%")
+            lab.setObjectName("desc")
+            sl = QSlider(Qt.Orientation.Horizontal)
+            sl.setRange(10, 100)
+            sl.setValue(int(tc(key)))
+            sl.setFixedWidth(180)
+            sl.valueChanged.connect(lambda v: (lab.setText(f"{v}%"), None if sl.isSliderDown() else self._set_tc(key, v)))
+            sl.sliderReleased.connect(lambda: self._set_tc(key, sl.value()))
+            box = QWidget()
+            bl = QHBoxLayout(box)
+            bl.setContentsMargins(0, 0, 0, 0)
+            bl.addWidget(sl)
+            bl.addWidget(lab)
+            return row(title, desc, box)
+
+        cc.addWidget(color_row("bg", "Цвет фона", "Основной цвет острова.", "Цвет фона острова"))
+        cc.addWidget(color_row("fg", "Цвет текста", "Часы, надписи и значки. Светлый фон — тёмный текст, и наоборот.", "Цвет текста"))
+
+        cc.addWidget(toggle_row("gradient", "Градиент", "Плавный переход от основного цвета ко второму."))
+        self.grad_box = QWidget()
+        gl = QVBoxLayout(self.grad_box)
+        gl.setContentsMargins(0, 0, 0, 0)
+        gl.setSpacing(14)
+        gl.addWidget(color_row("bg2", "Второй цвет", "", "Второй цвет градиента"))
+        dseg = Segmented([("v", "Сверху вниз"), ("h", "Слева направо"), ("d", "Наискосок")], tc("gradient_dir"))
+        dseg.changed.connect(lambda v: self._set_tc("gradient_dir", v))
+        gl.addWidget(row("Направление градиента", "", dseg))
+        cc.addWidget(self.grad_box)
+
+        cc.addWidget(toggle_row("glass", "Стекло", "Блик сверху и светлая кромка, как у матового стекла."))
+        self.glass_box = QWidget()
+        sl_ = QVBoxLayout(self.glass_box)
+        sl_.setContentsMargins(0, 0, 0, 0)
+        sl_.addWidget(slider_row("glass_strength", "Сила стекла", ""))
+        cc.addWidget(self.glass_box)
+
+        cc.addWidget(toggle_row("glow", "Подсветка", "Цветное свечение по краю острова, внутрь."))
+        self.glow_box = QWidget()
+        wl = QVBoxLayout(self.glow_box)
+        wl.setContentsMargins(0, 0, 0, 0)
+        wl.setSpacing(14)
+        wl.addWidget(color_row("glow_color", "Цвет подсветки", "", "Цвет подсветки"))
+        wl.addWidget(slider_row("glow_strength", "Сила подсветки", ""))
+        cc.addWidget(self.glow_box)
+
+        lay.addWidget(self.custom_card)
+        lay.addStretch()
+        self._refresh_theme_ui()
+        return sc
+
+    def _style_color_btn(self, key):
+        col = self.cfg["theme_custom"].get(key, C.CUSTOM_THEME_DEFAULT[key])
+        b = self._color_btns[key]
+        b.setText(col.upper())
+        b.setStyleSheet(f"QPushButton{{background:{col};color:{'#111111' if T.is_light(col) else '#ffffff'};"
+                        f"border:1px solid #4a4a56;border-radius:8px;padding:7px 10px;font-weight:600}}")
+
+    def _refresh_theme_ui(self):
+        self.custom_card.setVisible(self.cfg.get("theme") == "custom")
+        tc = self.cfg["theme_custom"]
+        self.grad_box.setVisible(bool(tc.get("gradient")))
+        self.glass_box.setVisible(bool(tc.get("glass")))
+        self.glow_box.setVisible(bool(tc.get("glow")))
+        for key in self._color_btns:
+            self._style_color_btn(key)
+        for k, tile in self.theme_tiles.items():
+            tile.setChecked(self.cfg.get("theme") == k)
+            tile.update()
+        self.theme_preview.update()
+
+    def _pick_theme(self, key):
+        self.cfg["theme"] = key
+        C.save_config(self.cfg)
+        self._refresh_theme_ui()
+
+    def _set_tc(self, key, value):
+        """Любое изменение «своей» темы сразу делает её активной."""
+        self.cfg["theme_custom"][key] = value
+        self.cfg["theme"] = "custom"
+        C.save_config(self.cfg)
+        self._refresh_theme_ui()
+
+    def _pick_theme_color(self, key, title):
+        col = QColorDialog.getColor(QColor(self.cfg["theme_custom"].get(key, C.CUSTOM_THEME_DEFAULT[key])), self, title)
+        if col.isValid():
+            self._set_tc(key, col.name())
 
     # ---- Запись экрана
     def _record(self):

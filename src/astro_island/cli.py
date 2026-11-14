@@ -8,15 +8,14 @@ so the applications start with standard commands::
 """
 from __future__ import annotations
 
-from .island import main as _run_island
-from .settings_app import main as _run_settings
-
 
 def island() -> int:
     """Launch the Dynamic Island overlay."""
+    from .island import main as _run_island  # импорт здесь: остров подменяет цвета под тему, настройкам это не нужно
     return _run_island()
 
 
 def settings() -> int:
     """Launch the settings window."""
+    from .settings_app import main as _run_settings
     return _run_settings()
