@@ -10,8 +10,8 @@ from PySide6.QtCore import QMimeData, QObject, QRectF, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QGuiApplication, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QScrollArea, QVBoxLayout, QWidget
 
-import common as C
-from island_modules import DARK, GRAY, ORANGE, mkbtn
+from . import common as C
+from .island_modules import DARK, GRAY, ORANGE, mkbtn
 
 AL = Qt.AlignmentFlag
 MAX_TEXT = 20000      # длиннее — обрезаем
