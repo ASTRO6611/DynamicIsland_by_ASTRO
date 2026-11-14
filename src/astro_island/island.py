@@ -22,15 +22,26 @@ from PySide6.QtWidgets import (QApplication, QFileIconProvider, QGraphicsOpacity
                                QFrame, QGridLayout, QHBoxLayout, QLabel, QMenu, QPushButton, QScrollArea,
                                QStackedWidget, QSystemTrayIcon, QVBoxLayout, QWidget)
 
-import common as C
-from mascots import draw_mascot, set_repo_color
-from island_clip import ClipPage, ClipStore
-from island_extras import LyricsEngine, LyricsPage, draw_eq, mix
-from island_mixer import MixerPage
-from island_rec import RecordPage
-from island_weather import WeatherService
-from island_modules import (INPUT_QSS, Alarm, CalcPage, EyePage, RemindersPage, SystemPage, TimerPage,
+from . import common as C
+from .mascots import draw_mascot, set_repo_color
+from .island_clip import ClipPage, ClipStore
+from .island_extras import LyricsEngine, LyricsPage, draw_eq, mix
+from .island_mixer import MixerPage
+from .island_rec import RecordPage
+from .island_weather import WeatherService
+from .island_modules import (INPUT_QSS, Alarm, CalcPage, EyePage, RemindersPage, SystemPage, TimerPage,
                             btn_style, fmt_hms)
+
+
+def package_resource(name: str):
+    """Путь к файлу внутри пакета (или None) — без привязки к папке запускаемого скрипта."""
+    try:
+        from importlib.resources import files
+        res = files(__package__) / name
+        return Path(res) if res.is_file() else None
+    except Exception:
+        return None
+
 
 EXP_W, EXP_H = 700, 292
 LYR_W = 460  # ширина пилюли в режиме бегущего текста
@@ -725,19 +736,10 @@ class Island(QWidget):
             b.setStyleSheet(TAB_ON if on else TAB_OFF)
 
     def open_settings(self):
-        script = Path(__file__).with_name("settings_app.py")
-        exe = Path(sys.executable)
-        flags = 0
-        if os.name == "nt":
-            sw = exe.with_name("AstroIslandSettings.exe")   # свой exe — в Диспетчере задач «Astro Island»
-            pw = exe.with_name("pythonw.exe")
-            if sw.exists():
-                exe = sw
-            elif pw.exists():
-                exe = pw
-            flags = 0x08000000  # CREATE_NO_WINDOW
+        """Открыть окно настроек отдельным процессом (остров продолжает работать)."""
+        flags = 0x08000000 if os.name == "nt" else 0  # CREATE_NO_WINDOW
         try:
-            subprocess.Popen([str(exe), str(script)], creationflags=flags)
+            subprocess.Popen([sys.executable, "-m", "astro_island.settings_app"], creationflags=flags)
         except Exception as e:
             print("Не удалось открыть настройки:", e)
 
@@ -1295,8 +1297,8 @@ class Island(QWidget):
 
 
 def make_tray_icon():
-    ico = Path(__file__).with_name("icon.png")   # фирменная иконка, если лежит рядом
-    if ico.exists():
+    ico = package_resource("icon.png")   # фирменная иконка из пакета
+    if ico is not None:
         return QIcon(str(ico))
     pm = QPixmap(64, 64)
     pm.fill(Qt.GlobalColor.transparent)

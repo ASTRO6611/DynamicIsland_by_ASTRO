@@ -13,7 +13,7 @@ from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
 from PySide6.QtWidgets import (QFileIconProvider, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
                                QVBoxLayout, QWidget)
 
-from island_extras import mix, py_exe
+from .island_extras import mix, py_exe
 
 NOWIN = 0x08000000 if os.name == "nt" else 0
 PKGS = ["pycaw", "comtypes", "psutil"]

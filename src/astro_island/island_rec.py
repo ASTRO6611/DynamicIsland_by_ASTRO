@@ -15,8 +15,8 @@ from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QFontMetrics, QGuiApplication
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
-import common as C
-from island_snip import start_snip
+from . import common as C
+from .island_snip import start_snip
 
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 MODES = [("screen", "Только экран"), ("sys", "Экран + звук ПК"), ("sysmic", "Экран + ПК + микрофон")]
@@ -44,12 +44,6 @@ def find_ffmpeg():
     if "p" in _ffmpeg_cache:
         return _ffmpeg_cache["p"]
     found = shutil.which("ffmpeg")
-    if not found:
-        here = Path(__file__).parent
-        for cand in (here / "ffmpeg.exe", here / "ffmpeg" / "bin" / "ffmpeg.exe", here / "ffmpeg"):
-            if cand.is_file():
-                found = str(cand)
-                break
     if not found:
         try:
             import imageio_ffmpeg

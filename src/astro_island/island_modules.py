@@ -16,7 +16,7 @@ from PySide6.QtGui import (QColor, QCursor, QFont, QFontMetrics, QLinearGradient
 from PySide6.QtWidgets import (QAbstractSpinBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
                                QPushButton, QScrollArea, QStackedWidget, QTimeEdit, QVBoxLayout, QWidget)
 
-import common as C
+from . import common as C
 
 INPUT_QSS = (
     "QLabel{color:#ffffff;}"

@@ -11,7 +11,7 @@ from PySide6.QtGui import (QColor, QCursor, QFont, QFontMetrics, QGuiApplication
                            QPen, QPixmap)
 from PySide6.QtWidgets import QColorDialog, QHBoxLayout, QLineEdit, QPushButton, QWidget
 
-import common as C
+from . import common as C
 
 PALETTE = ["#ff453a", "#ff9f0a", "#ffd60a", "#30d158", "#0a84ff", "#bf5af2", "#ffffff", "#000000"]
 PEN_WIDTHS = [3, 6, 11]          # тонкая, средняя, толстая кисть

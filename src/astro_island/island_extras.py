@@ -24,8 +24,8 @@ from PySide6.QtGui import (QBrush, QColor, QFont, QFontMetrics, QGuiApplication,
                            QPainter, QPainterPath, QPen, QPixmap, QRadialGradient)
 from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
 
-import common as C
-from island_modules import btn_style, mkbtn
+from . import common as C
+from .island_modules import btn_style, mkbtn
 
 UA = "DynamicIslandRU/1.0 (desktop widget)"
 AL = Qt.AlignmentFlag
@@ -149,15 +149,12 @@ def dep_sets():
 
 
 def py_exe():
+    """Интерпретатор для вспомогательных процессов (без оконного pythonw)."""
     exe = sys.executable or "python"
-    if os.path.basename(exe).lower().startswith("astroisland"):   # наш exe без консоли → берём python.exe рядом
-        cand = os.path.join(os.path.dirname(exe), "python.exe")
-        if os.path.exists(cand):
-            return cand
     if exe.lower().endswith("pythonw.exe"):
-        cand = exe[:-len("pythonw.exe")] + "python.exe"
-        if os.path.exists(cand):
-            return cand
+        console = exe[: -len("pythonw.exe")] + "python.exe"
+        if os.path.exists(console):
+            return console
     return exe
 
 

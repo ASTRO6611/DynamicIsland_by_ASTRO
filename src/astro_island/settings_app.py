@@ -4,7 +4,6 @@
 """
 import os
 import sys
-from pathlib import Path
 
 from PySide6.QtCore import QLockFile, QPointF, QRect, QRectF, Qt, QVariantAnimation, Signal
 from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen
@@ -12,8 +11,8 @@ from PySide6.QtWidgets import (QAbstractButton, QApplication, QColorDialog, QFil
                                QLabel, QLineEdit, QPushButton, QScrollArea, QSlider, QStackedWidget,
                                QVBoxLayout, QWidget)
 
-import common as C
-from mascots import MASCOTS, draw_mascot, set_repo_color
+from . import common as C
+from .mascots import MASCOTS, draw_mascot, set_repo_color
 
 QSS = """
 * { font-family: 'Segoe UI Variable Text','Segoe UI'; color:#f2f2f7; font-size:14px; }
@@ -330,15 +329,8 @@ def autostart_set(enabled: bool):
                          0, winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE)
     try:
         if enabled:
-            exe = Path(sys.executable)
-            ai = exe.with_name("AstroIsland.exe")
-            pw = exe.with_name("pythonw.exe")
-            if ai.exists():
-                exe = ai
-            elif pw.exists():
-                exe = pw
-            script = Path(__file__).with_name("island.py")
-            winreg.SetValueEx(key, C.APP_NAME, 0, winreg.REG_SZ, f'"{exe}" "{script}"')
+            command = f'"{sys.executable}" -m astro_island'
+            winreg.SetValueEx(key, C.APP_NAME, 0, winreg.REG_SZ, command)
         else:
             try:
                 winreg.DeleteValue(key, C.APP_NAME)
@@ -761,8 +753,9 @@ def main():
             pass
     app = QApplication(sys.argv)
     from PySide6.QtGui import QIcon
-    ico = Path(__file__).with_name("icon.png")
-    if ico.exists():
+    from importlib.resources import files
+    ico = files("astro_island") / "icon.png"
+    if ico.is_file():
         app.setWindowIcon(QIcon(str(ico)))
     app.setStyleSheet(QSS)
     C.CFG_DIR.mkdir(parents=True, exist_ok=True)
