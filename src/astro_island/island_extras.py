@@ -12,6 +12,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -159,7 +160,56 @@ def py_exe():
 
 
 def fix_command():
-    return f'"{py_exe()}" -m pip install ' + " ".join(dep_sets()[0])
+    return f'"{py_exe()}" -m ensurepip --upgrade && "{py_exe()}" -m pip install ' + " ".join(dep_sets()[0])
+
+
+def _run(args, timeout=420):
+    """Тихий запуск python без окна консоли."""
+    return subprocess.run([py_exe(), *args], capture_output=True, text=True, errors="replace",
+                          timeout=timeout, creationflags=NOWIN)
+
+
+def _tail(r):
+    lines = ((r.stdout or "") + "\n" + (r.stderr or "")).strip().splitlines()
+    return lines[-1] if lines else f"код {r.returncode}"
+
+
+def ensure_pip():
+    """В venv может не быть pip (создан с --without-pip или pip удалён). Чиним сами.
+    Возвращает None при успехе или текст ошибки."""
+    try:
+        if _run(["-m", "pip", "--version"], timeout=60).returncode == 0:
+            return None
+        # 1) штатный bootstrap из stdlib — работает и для venv без pip
+        r = _run(["-m", "ensurepip", "--upgrade", "--default-pip"], timeout=240)
+        if _run(["-m", "pip", "--version"], timeout=60).returncode == 0:
+            return None
+        # 2) запасной путь: get-pip.py (например, embeddable Python без ensurepip)
+        try:
+            path = os.path.join(tempfile.gettempdir(), "astro_get-pip.py")
+            req = urllib.request.Request("https://bootstrap.pypa.io/get-pip.py", headers={"User-Agent": UA})
+            with urllib.request.urlopen(req, timeout=30) as resp, open(path, "wb") as f:
+                f.write(resp.read())
+            r = _run([path, "--no-warn-script-location"], timeout=300)
+        except Exception as e:
+            return f"pip не установился: {type(e).__name__}: {e}"
+        if _run(["-m", "pip", "--version"], timeout=60).returncode == 0:
+            return None
+        return "pip не установился: " + _tail(r)
+    except Exception as e:
+        return f"pip не установился: {type(e).__name__}: {e}"
+
+
+def pip_install(pkgs, timeout=420):
+    """pip install с авто-починкой pip. Возвращает (ok, текст_ошибки)."""
+    err = ensure_pip()
+    if err:
+        return False, err
+    try:
+        r = _run(["-m", "pip", "install", "--disable-pip-version-check", *pkgs], timeout=timeout)
+        return (True, "") if r.returncode == 0 else (False, _tail(r))
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
 
 
 def pretty_app(aumid):
@@ -496,18 +546,13 @@ class LyricsEngine(QObject):
         threading.Thread(target=self._install, daemon=True).start()
 
     def _install(self):
-        exe, tail = py_exe(), ""
+        tail = ""
         for pkgs in dep_sets():
-            try:
-                r = subprocess.run([exe, "-m", "pip", "install", "--disable-pip-version-check", *pkgs],
-                                   capture_output=True, text=True, timeout=420, creationflags=NOWIN)
-                if r.returncode == 0:
-                    self._install_done.emit(True, "")
-                    return
-                lines = (r.stdout + "\n" + r.stderr).strip().splitlines()
-                tail = lines[-1] if lines else f"pip завершился с кодом {r.returncode}"
-            except Exception as e:
-                tail = f"{type(e).__name__}: {e}"
+            ok, err = pip_install(pkgs)
+            if ok:
+                self._install_done.emit(True, "")
+                return
+            tail = err
         self._install_done.emit(False, tail)
 
     def _on_install_done(self, ok, msg):

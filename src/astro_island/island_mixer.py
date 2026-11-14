@@ -4,7 +4,6 @@
 """
 import importlib
 import os
-import subprocess
 import sys
 import threading
 
@@ -13,9 +12,8 @@ from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
 from PySide6.QtWidgets import (QFileIconProvider, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
                                QVBoxLayout, QWidget)
 
-from .island_extras import mix, py_exe
+from .island_extras import mix, pip_install, py_exe
 
-NOWIN = 0x08000000 if os.name == "nt" else 0
 PKGS = ["pycaw", "comtypes", "psutil"]
 MUTE_OFF = ("QPushButton{background:#1c1c1e;border:none;border-radius:14px;font-size:14px}"
             "QPushButton:hover{background:#2c2c2e}")
@@ -514,16 +512,8 @@ class MixerPage(QWidget):
         threading.Thread(target=self._install, daemon=True).start()
 
     def _install(self):
-        try:
-            r = subprocess.run([py_exe(), "-m", "pip", "install", "--disable-pip-version-check", *PKGS],
-                               capture_output=True, text=True, timeout=420, creationflags=NOWIN)
-            if r.returncode == 0:
-                self._install_done.emit(True, "")
-                return
-            lines = (r.stdout + "\n" + r.stderr).strip().splitlines()
-            self._install_done.emit(False, lines[-1] if lines else f"код {r.returncode}")
-        except Exception as e:
-            self._install_done.emit(False, f"{type(e).__name__}: {e}")
+        ok, err = pip_install(PKGS)
+        self._install_done.emit(ok, err)
 
     def _on_install_done(self, ok, msg):
         self._installing = False

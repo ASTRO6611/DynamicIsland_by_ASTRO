@@ -489,7 +489,7 @@ def autostart_set(enabled: bool):
                          0, winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE)
     try:
         if enabled:
-            command = f'"{sys.executable}" -m astro_island'
+            command = C.self_command()
             winreg.SetValueEx(key, C.APP_NAME, 0, winreg.REG_SZ, command)
         else:
             try:
@@ -1131,10 +1131,13 @@ def main():
             pass
     app = QApplication(sys.argv)
     from PySide6.QtGui import QIcon
-    from importlib.resources import files
-    ico = files("astro_island") / "icon.png"
-    if ico.is_file():
-        app.setWindowIcon(QIcon(str(ico)))
+    try:
+        from importlib.resources import files
+        ico = files("astro_island") / "icon.png"
+        if ico.is_file():
+            app.setWindowIcon(QIcon(str(ico)))
+    except Exception:
+        pass
     app.setStyleSheet(QSS)
     C.CFG_DIR.mkdir(parents=True, exist_ok=True)
     lock = QLockFile(str(C.CFG_DIR / "settings.lock"))

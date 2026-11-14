@@ -764,7 +764,7 @@ class Island(QWidget):
         """Открыть окно настроек отдельным процессом (остров продолжает работать)."""
         flags = 0x08000000 if os.name == "nt" else 0  # CREATE_NO_WINDOW
         try:
-            subprocess.Popen([sys.executable, "-m", "astro_island.settings_app"], creationflags=flags)
+            subprocess.Popen(C.self_argv(settings=True), creationflags=flags)
         except Exception as e:
             print("Не удалось открыть настройки:", e)
 
@@ -1403,7 +1403,7 @@ def main():
         """Перезапуск острова: нужен, когда сменился цвет фона или текста темы."""
         lock.unlock()  # освобождаем замок, чтобы новый экземпляр запустился
         try:
-            subprocess.Popen([sys.executable, "-m", __package__ or "astro_island"],
+            subprocess.Popen(C.self_argv(),
                              creationflags=0x08000000 if os.name == "nt" else 0)
         except Exception as e:
             print("Не удалось перезапустить остров:", e)

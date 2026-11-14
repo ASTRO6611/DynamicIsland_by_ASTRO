@@ -2,6 +2,7 @@
 import json
 import os
 import re
+import sys
 from pathlib import Path
 
 APP_NAME = "DynamicIslandRU"
@@ -13,6 +14,25 @@ LYRICS_DIR = CFG_DIR / "lyrics"   # кэш найденных текстов
 QUIT_FLAG = CFG_DIR / "quit.flag"        # настройки кладут сюда файл — остров видит его и закрывается
 CLIP_FILE = CFG_DIR / "clipboard.json"   # история буфера обмена
 CLIP_DIR = CFG_DIR / "clips"             # картинки из истории буфера
+
+
+# ───────── запуск самой программы (из исходников и из сборки Nuitka) ─────────
+def is_compiled() -> bool:
+    """True, если это собранный exe (Nuitka/PyInstaller), а не запуск из исходников."""
+    return bool(getattr(sys, "frozen", False)) or "__compiled__" in globals()
+
+
+def self_argv(settings: bool = False) -> list:
+    """Команда запуска второго экземпляра: сборка — сам exe, исходники — python -m."""
+    if is_compiled():
+        return [sys.executable, "--settings"] if settings else [sys.executable]
+    module = "astro_island.settings_app" if settings else "astro_island"
+    return [sys.executable, "-m", module]
+
+
+def self_command(settings: bool = False) -> str:
+    """Та же команда строкой (для реестра автозапуска)."""
+    return " ".join(f'"{a}"' for a in self_argv(settings))
 
 # ───────── темы острова ─────────
 # Параметры темы. У готовых тем (чёрная, белая) меняются только цвета, у «своей» — всё, что ниже.

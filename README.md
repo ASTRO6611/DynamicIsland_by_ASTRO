@@ -49,16 +49,33 @@ A custom, smooth desktop Dynamic Island for Windows built with Python (PySide6).
 
 You can also run the package as a module with `uv run python -m astro_island`.
 
+### 📦 Building a single exe
+The app can be compiled with **[Nuitka](https://nuitka.net/)** into one `DynamicIsland.exe`
+(no Python required on the target machine):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build.ps1
+```
+
+The result is `build\DynamicIsland.exe`. Nuitka needs a C compiler: MSVC
+(Visual Studio Build Tools, "C++" workload) for any Python version, or MinGW-w64
+for Python ≤ 3.12 — the script automatically prepares `.venv-build` with
+Python 3.12 when only MinGW is available. `main.py` is the entry point:
+`DynamicIsland.exe` starts the island, `DynamicIsland.exe --settings` opens the
+settings window (same process re-launch that the tray menu uses).
+
 ### 🧱 Project layout
 ```
 .
 ├── install.bat           # one-click Windows bootstrap (optional)
+├── main.py               # entry point for Nuitka / plain runs
 ├── pyproject.toml        # project metadata, dependencies, CLI entry points
 ├── uv.lock               # reproducible dependency lockfile
 ├── src/
 │   └── astro_island/     # application package (importable code)
 ├── assets/               # icons used by packaging / documentation
 └── scripts/
+    ├── build.ps1         # Nuitka onefile build
     └── exe_branding.py   # maintainer-only helper (not needed to run the app)
 ```
 
@@ -118,16 +135,32 @@ Core features are fully functional and performance-optimized. We are constantly 
 
 Также можно запустить пакет как модуль: `uv run python -m astro_island`.
 
+### 📦 Сборка одного exe
+Приложение собирается в один `DynamicIsland.exe` через
+**[Nuitka](https://nuitka.net/)** (Python на целевой машине не нужен):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build.ps1
+```
+
+Готовый файл: `build\DynamicIsland.exe`. Нужен C-компилятор: MSVC
+(Visual Studio Build Tools, workload «C++») — с любым Python, либо MinGW-w64 —
+только для Python ≤ 3.12 (тогда скрипт сам готовит `.venv-build` на Python 3.12).
+Точка входа — `main.py`: `DynamicIsland.exe` запускает остров,
+`DynamicIsland.exe --settings` открывает настройки (так же их открывает меню в трее).
+
 ### 🧱 Структура проекта
 ```
 .
 ├── install.bat           # установка в один клик для Windows (необязательно)
+├── main.py               # точка входа для Nuitka и обычного запуска
 ├── pyproject.toml        # метаданные, зависимости и точки входа CLI
 ├── uv.lock               # зафиксированные версии зависимостей
 ├── src/
 │   └── astro_island/     # пакет приложения
 ├── assets/               # иконки для упаковки и документации
 └── scripts/
+    ├── build.ps1         # сборка Nuitka onefile
     └── exe_branding.py   # вспомогательный скрипт для сборки (для запуска не нужен)
 ```
 
