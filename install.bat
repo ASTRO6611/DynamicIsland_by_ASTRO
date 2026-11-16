@@ -102,13 +102,21 @@ echo.
 set "ans="
 set /p "ans=Запустить Astro Island сейчас? [Y/n] "
 if /i "%ans%"=="n" goto finish
-uv run astro-island
+echo Запускаю остров в фоне...
+if exist "%~dp0.venv\Scripts\pythonw.exe" (
+    REM pythonw без консоли: закрытие этого окна не остановит остров
+    start "" "%~dp0.venv\Scripts\pythonw.exe" -m astro_island
+) else (
+    start "" powershell -NoProfile -WindowStyle Hidden -Command "uv run astro-island"
+)
 
 :finish
 echo.
 echo Готово! Ручной запуск:
 echo    uv run astro-island
 echo    uv run astro-island-settings
+echo.
+echo Это окно можно закрыть - остров продолжит работать.
 echo.
 pause
 exit /b 0

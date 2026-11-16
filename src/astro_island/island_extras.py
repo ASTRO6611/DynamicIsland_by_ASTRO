@@ -235,13 +235,20 @@ class MediaWatcher(QObject):
         self.enabled = True
         self._cmds = []
         self._started = False
+        self._stop = False
         self._ck, self._have_cover, self._tries, self._next_try = "", False, 0, 0.0
 
     def start(self):
         if self._started:
             return
         self._started = True
+        self._stop = False
         threading.Thread(target=self._run, daemon=True).start()
+
+    def stop(self):
+        """Останавливает опрос: иначе поток шлёт сигналы уже удалённым объектам."""
+        self.enabled = False
+        self._stop = True
 
     def _run(self):
         try:
@@ -265,7 +272,7 @@ class MediaWatcher(QObject):
             self.updated.emit({"error": "winrt", "detail": f"{type(e).__name__}: {e}"})
             return
         fails = 0
-        while True:
+        while not self._stop:
             try:
                 sess = self._pick(mgr)
                 while self._cmds:
@@ -274,10 +281,15 @@ class MediaWatcher(QObject):
                     self.updated.emit(await self._snapshot(sess))
                 fails = 0
             except Exception as e:
+                if self._stop:
+                    return
                 fails += 1
                 if fails == 3:  # одиночные сбои плеера не показываем — только если это надолго
                     print("Live Lyrics: ошибка чтения плеера:", e)
-                    self.updated.emit({"error": "poll", "detail": f"{type(e).__name__}: {e}"})
+                    try:
+                        self.updated.emit({"error": "poll", "detail": f"{type(e).__name__}: {e}"})
+                    except RuntimeError:  # окно уже закрыли
+                        return
             await asyncio.sleep(0.5)
 
     @staticmethod
@@ -515,6 +527,10 @@ class LyricsEngine(QObject):
         self._last_play = 0.0
 
     # ---- управление
+    def stop(self):
+        """Останавливает опрос плеера при выходе."""
+        self.watcher.stop()
+
     def set_enabled(self, on):
         self.watcher.enabled = on
         if on:

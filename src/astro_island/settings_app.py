@@ -1092,6 +1092,7 @@ class SettingsWindow(QWidget):
             ("timer", "Таймер и секундомер", "Обратный отсчёт со звуком и секундомер с кругами."),
             ("reminders", "Напоминания", "Напоминания на нужное время — остров сам раскроется и подаст сигнал."),
             ("calc", "Калькулятор", "Обычный калькулятор, работает и с клавиатуры."),
+            ("ai", "Локальная ИИ", "Вкладка «ИИ»: чат с локальной моделью Qwen2.5-1.5B прямо на острове, без интернета. Плюс быстрые действия с текстом из буфера: перевести, объяснить, суммировать. Модель входит в exe и грузится только при открытии вкладки."),
             ("system", "Система", "Загрузка процессора и памяти, скорость сети и диска в реальном времени. Нужна библиотека psutil."),
             ("eye", "Большой глаз (вкладка)", "Отдельная вкладка с большим глазом. Персонажа на острове выбирают в «Внешнем виде»."),
             ("music", "Музыка и тексты", "Вкладка с текстом песни, который идёт в такт музыке. Нужна библиотека winsdk."),
@@ -1129,7 +1130,7 @@ def main():
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ASTRO.DynamicIsland.Settings")
         except Exception:
             pass
-    app = QApplication(sys.argv)
+    app = C.qt_app()
     from PySide6.QtGui import QIcon
     try:
         from importlib.resources import files
@@ -1140,6 +1141,7 @@ def main():
         pass
     app.setStyleSheet(QSS)
     C.CFG_DIR.mkdir(parents=True, exist_ok=True)
+    C.clear_stale_lock("settings.lock")
     lock = QLockFile(str(C.CFG_DIR / "settings.lock"))
     if not lock.tryLock(200):
         return 0  # окно настроек уже открыто

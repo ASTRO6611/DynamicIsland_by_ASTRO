@@ -33,6 +33,17 @@ if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
 # Nuitka has to see the package from src/.
 $env:PYTHONPATH = (Join-Path $PWD "src")
 
+# Bundled local AI (llama-server + GGUF model). Downloaded once, not stored in git.
+$aiServer = Join-Path $PWD "src\astro_island\ai\llama-server.exe"
+$aiModel = Join-Path $PWD "src\astro_island\ai\model.gguf"
+if (-not (Test-Path $aiServer) -or -not (Test-Path $aiModel)) {
+    & (Join-Path $PSScriptRoot "fetch_ai.ps1")
+}
+if (-not (Test-Path $aiServer) -or -not (Test-Path $aiModel)) {
+    Write-Host "AI assets are missing: src\astro_island\ai" -ForegroundColor Yellow
+    exit 1
+}
+
 # WinRT: winsdk on Python <= 3.12, separate winrt-* modules on 3.13+.
 $pyMinor = & $py -c "import sys; print(sys.version_info[1])"
 if ($pyMinor -ge 13) {
@@ -56,15 +67,17 @@ if ($pyMinor -ge 13) {
     --remove-output `
     --windows-console-mode=disable `
     --python-flag=-OO `
-    --lto=yes `
-    --noinclude-dlls="libpython3.*" `
-    --nofollow-import-to=tkinter,unittest,pytest,setuptools `
+    --low-memory `
+    --jobs=3 `
+    --nofollow-import-to=tkinter,unittest,pytest,setuptools,comtypes.test `
     --enable-plugin=pyside6 `
     --include-package=astro_island `
     --include-package=pycaw `
     --include-package=comtypes `
     --include-package-data=imageio_ffmpeg `
     --include-data-file=src/astro_island/icon.png=astro_island/icon.png `
+    --include-data-file=src/astro_island/ai_logo.png=astro_island/ai_logo.png `
+    --include-raw-dir=src/astro_island/ai=astro_island/ai `
     --windows-icon-from-ico=assets/icon.ico `
     --windows-company-name=ASTRO `
     --windows-product-name="Dynamic Island" `

@@ -28,10 +28,15 @@ src/astro_island/
   island_rec.py             # запись экрана (ffmpeg + опц. PyAudioWPatch)
   island_snip.py            # скриншот и «ножницы»
   island_clip.py            # история буфера обмена
+  island_ai.py              # локальная ИИ: llama-server + GGUF, чат и буфер
+  island_tools.py           # инструменты ИИ: таймер, напоминания, плеер, запись, вкладки
   island_downloads.py       # загрузки браузера
   island_weather.py         # погода
+  ai/                       # llama-server.exe + model.gguf (не в git, см. scripts/fetch_ai.ps1)
   settings_app.py           # окно настроек (отдельный процесс)
   theme.py, mascots.py      # оформление и персонажи
+  icons.py                  # векторные иконки вкладок (вместо эмодзи)
+  ai_logo.png               # официальный логотип Qwen для вкладки ИИ
 ```
 
 ## Правила кода
@@ -73,10 +78,40 @@ uv run astro-island
 Для оконных изменений — глазами: остров в покое/раскрытый, каждая вкладка,
 настройки, перезапуск после смены темы.
 
+Быстрые самопроверки (пишут отчёт в `%TEMP%`, код возврата ≠ 0 при провале):
+```bash
+python main.py --tools-selftest   # все 12 инструментов ИИ на живом острове
+python main.py --ai-selftest      # встроенная модель отвечает
+build\DynamicIsland.exe --tools-selftest   # то же уже в собранном exe
+build\DynamicIsland.exe --ai-selftest
+```
+`--tools-selftest` реально ставит таймер и напоминание, меняет громкость (потом
+возвращает), пишет короткую запись экрана и скриншот — оба файла удаляются.
+
 ## Частые грабли
-- `sys.executable` в onefile — это exe, а не python: не вызывайте `-m ...` без
-  проверки `common.is_compiled()`.
+- В Nuitka `sys.executable` — это встроенный `python.exe` в temp, а не сам exe.
+  Для запуска себя (настройки, перезапуск, автозапуск) берите
+  `common.exe_path()` / `common.self_argv()`: путь к exe берётся из
+  `__compiled__.original_argv0`. Иначе вместо настроек запустится python и молча выйдет.
+- `sys.frozen` Nuitka не выставляет; признак сборки — `__compiled__` в globals.
 - `importlib.resources.files("astro_island")` должен работать и в exe —
   данные добавляются через `--include-data-file`.
 - Не удаляйте `# noqa`/ленивые импорты «для чистоты»: они нужны для сборки и
   для запуска без опциональных пакетов.
+- Инструменты ИИ (`island_tools.run_tool`) трогают виджеты, поэтому выполняются
+  на главном потоке: `LocalAI` в фоне лишь шлёт сигнал `tool_request` и ждёт
+  результат (`ToolRequest.done`). Не вызывайте страницы острова из потока модели.
+- llama-server запускается с `--jinja`: без него llama.cpp не разбирает вызовы
+  инструментов (OpenAI-совместимые `tools` приходят обычным текстом).
+- В Windows API громкость — `Get/SetMasterVolumeLevelScalar`, а не
+  `...VolumeScalar` (в старых сборках pycaw было иначе — см. `Mixer._vol_get`).
+- `QApplication` создавайте только через `common.qt_app()`: Nuitka подменяет класс
+  обёрткой, которая тянет иконку из exe через `ExtractIconExW`. Наша иконка —
+  PNG-сжатая (Vista+), такие `ExtractIconExW` не отдаёт: счётчик есть, хендл
+  пустой → `QImage.fromHICON(None)` и падение до нашего кода. `qt_app()` берёт
+  настоящий класс из `QApplication.__mro__[1]`.
+- Перед `QLockFile.tryLock()` вызывайте `common.clear_stale_lock("island.lock")`
+  (или `settings.lock`): после `Stop-Process -Force` замок остаётся «занятым»
+  и приложение молча выходит с кодом 0.
+- Иконка `assets/icon.ico` содержит PNG-сжатые кадры 256×256 — это нормально для
+  Проводника и панели задач, но не для `ExtractIconExW` (см. выше).

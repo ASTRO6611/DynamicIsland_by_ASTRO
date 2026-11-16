@@ -22,10 +22,22 @@ def is_compiled() -> bool:
     return bool(getattr(sys, "frozen", False)) or "__compiled__" in globals()
 
 
+def exe_path() -> str:
+    """Путь к exe самой программы.
+    В сборке Nuitka sys.executable — это встроенный python.exe во временной папке,
+    поэтому берём original_argv0 (путь, которым программу запустили)."""
+    if is_compiled():
+        compiled = globals().get("__compiled__")
+        path = getattr(compiled, "original_argv0", None) or (sys.argv[0] if sys.argv else "")
+        if path:
+            return os.path.abspath(path)
+    return sys.executable
+
+
 def self_argv(settings: bool = False) -> list:
     """Команда запуска второго экземпляра: сборка — сам exe, исходники — python -m."""
     if is_compiled():
-        return [sys.executable, "--settings"] if settings else [sys.executable]
+        return [exe_path(), "--settings"] if settings else [exe_path()]
     module = "astro_island.settings_app" if settings else "astro_island"
     return [sys.executable, "-m", module]
 
@@ -33,6 +45,77 @@ def self_argv(settings: bool = False) -> list:
 def self_command(settings: bool = False) -> str:
     """Та же команда строкой (для реестра автозапуска)."""
     return " ".join(f'"{a}"' for a in self_argv(settings))
+
+
+# ───────── запуск Qt и замки одного экземпляра ─────────
+def qt_app(argv=None):
+    """Создаёт QApplication в обход обёртки Nuitka.
+
+    Nuitka подменяет ``QApplication`` классом, который тащит иконку из ресурсов exe
+    через ``ExtractIconExW``. PNG-сжатые иконки (Vista+) при этом дают пустой хендл,
+    и приложение падает на ``QImage.fromHICON(None)`` ещё до нашего кода. Свою иконку
+    мы всё равно ставим сами, поэтому берём настоящий класс из MRO обёртки.
+    """
+    from PySide6.QtWidgets import QApplication
+    cls = QApplication
+    try:
+        if "postLoad" in QApplication.__init__.__code__.co_filename:  # обёртка Nuitka
+            cls = QApplication.__mro__[1]
+    except Exception:
+        pass
+    return cls(sys.argv if argv is None else argv)
+
+
+def _pid_alive(pid: int) -> bool:
+    """Жив ли процесс с таким PID (без риска его убить)."""
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            k32 = ctypes.windll.kernel32
+            k32.OpenProcess.restype = wintypes.HANDLE
+            handle = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+            if not handle:
+                return False
+            try:
+                code = wintypes.DWORD()
+                if not k32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                    return False
+                return code.value == 259  # STILL_ACTIVE
+            finally:
+                k32.CloseHandle(handle)
+        except Exception:
+            return True  # не смогли проверить — считаем, что занято
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def clear_stale_lock(name: str) -> bool:
+    """Удаляет замок, оставшийся от убитого процесса.
+
+    ``QLockFile`` держит замок, пока жив процесс с записанным PID, поэтому после
+    ``Stop-Process -Force`` остров молча выходил с «уже запущен». Первая строка
+    файла — PID.
+    """
+    path = CFG_DIR / name
+    try:
+        if not path.exists():
+            return False
+        pid = int(path.read_text("utf-8", "ignore").split()[0])
+    except Exception:
+        return False
+    if _pid_alive(pid):
+        return False
+    try:
+        path.unlink()
+        return True
+    except Exception:
+        return False
 
 # ───────── темы острова ─────────
 # Параметры темы. У готовых тем (чёрная, белая) меняются только цвета, у «своей» — всё, что ниже.
@@ -91,7 +174,7 @@ DEFAULTS = {
     "weather_city": "",         # город для погоды ("" — определить автоматически по IP)
     "clip_pause": False,        # история буфера: запись на паузе
     "clip_persist": True,       # история буфера: хранить на диске между запусками
-    "modules": {"clock": True, "timer": True, "reminders": True, "calc": True, "system": True, "eye": False, "shelf": True,
+    "modules": {"clock": True, "timer": True, "reminders": True, "calc": True, "ai": True, "system": True, "eye": False, "shelf": True,
                 "music": True, "clip": True, "rec": True, "mixer": True},
 }
 

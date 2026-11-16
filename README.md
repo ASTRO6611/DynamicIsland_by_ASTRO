@@ -13,6 +13,10 @@ A custom, smooth desktop Dynamic Island for Windows built with Python (PySide6).
 * 📊 **Hardware Monitoring** — keep an eye on your system performance.
 * ⏱️ **Timers & Clocks** — convenient tools right at your cursor.
 * 📋 **Clipboard Manager** — quick access to your copied history.
+* 🤖 **Local AI** — an offline chat tab with a bundled model (translate, explain,
+  summarize clipboard text). The model also **drives the island**: set a timer, add a
+  reminder, do math, switch tracks, change volume, open a tab, start a screen recording
+  or take a screenshot. Fully offline.
 * ⚙️ **Advanced Settings Panel** — fully customizable look, feel, and behavior.
 * 🚀 **Multi-threaded & Optimized** — runs smoothly without lags or freezes.
 
@@ -64,6 +68,10 @@ Python 3.12 when only MinGW is available. `main.py` is the entry point:
 `DynamicIsland.exe` starts the island, `DynamicIsland.exe --settings` opens the
 settings window (same process re-launch that the tray menu uses).
 
+The local AI assets (`llama-server.exe` + a ~1 GB GGUF model) are downloaded on
+demand by `scripts/fetch_ai.ps1` and baked into the exe — the onefile build ends
+up around 1.2 GB and unpacks itself on first launch.
+
 ### 🧱 Project layout
 ```
 .
@@ -76,6 +84,7 @@ settings window (same process re-launch that the tray menu uses).
 ├── assets/               # icons used by packaging / documentation
 └── scripts/
     ├── build.ps1         # Nuitka onefile build
+    ├── fetch_ai.ps1      # downloads the bundled llama-server + GGUF model
     └── exe_branding.py   # maintainer-only helper (not needed to run the app)
 ```
 
@@ -99,6 +108,10 @@ Core features are fully functional and performance-optimized. We are constantly 
 * 📊 **Мониторинг системы** — следите за производительностью компьютера.
 * ⏱️ **Таймеры и часы** — удобные инструменты всегда под рукой.
 * 📋 **Менеджер буфера обмена** — быстрый доступ к истории скопированного текста.
+* 🤖 **Локальная ИИ** — вкладка с чатом на встроенной модели: перевод, объяснение и
+  краткий пересказ текста из буфера. Модель умеет **управлять островом**: поставить
+  таймер, создать напоминание, посчитать, переключить трек, изменить громкость,
+  открыть вкладку, начать запись экрана или сделать скриншот. Полностью офлайн.
 * ⚙️ **Продвинутая панель настроек** — полностью настраиваемый внешний вид и поведение.
 * 🚀 **Многопоточность и оптимизация** — работает плавно, без лагов и фризов.
 

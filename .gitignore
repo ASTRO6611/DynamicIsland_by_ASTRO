@@ -20,4 +20,7 @@ dist/
 .pytest_cache/
 .ruff_cache/
 
+# Local AI assets (llama-server + ~1 GB model), fetched by scripts/fetch_ai.ps1
+src/astro_island/ai/
+
 _repomix-output.xml

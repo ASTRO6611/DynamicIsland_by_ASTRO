@@ -57,6 +57,23 @@ class Mixer:
         self._master_try = 0.0
 
     # ---- общая громкость
+    @staticmethod
+    def _vol_get(ep):
+        """Громкость 0..1. В Windows API метод называется ...LevelScalar,
+        но старые сборки pycaw отдавали интерфейс без Level — пробуем оба имени."""
+        try:
+            return float(ep.GetMasterVolumeLevelScalar())
+        except AttributeError:
+            return float(ep.GetMasterVolumeScalar())
+
+    @staticmethod
+    def _vol_set(ep, v):
+        v = max(0.0, min(1.0, v))
+        try:
+            ep.SetMasterVolumeLevelScalar(v, None)
+        except AttributeError:
+            ep.SetMasterVolumeScalar(v, None)
+
     def connect_master(self):
         try:
             au, cc = _pycaw()
@@ -67,21 +84,21 @@ class Mixer:
                 iface = raw.Activate(au.IAudioEndpointVolume._iid_, cc.CLSCTX_ALL, None)
                 import ctypes
                 ep = ctypes.cast(iface, ctypes.POINTER(au.IAudioEndpointVolume))
-            ep.GetMasterVolumeScalar()
+            self._vol_get(ep)
             self.master = ep
         except Exception as e:
             self.master, self.err = None, f"{type(e).__name__}: {e}"
 
     def master_get(self):
         try:
-            return float(self.master.GetMasterVolumeScalar()), bool(self.master.GetMute())
+            return self._vol_get(self.master), bool(self.master.GetMute())
         except Exception:
             self.master = None
             return 0.0, False
 
     def master_set(self, v):
         try:
-            self.master.SetMasterVolumeScalar(max(0.0, min(1.0, v)), None)
+            self._vol_set(self.master, v)
             if v > 0 and self.master.GetMute():
                 self.master.SetMute(0, None)
         except Exception:

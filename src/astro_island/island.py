@@ -18,7 +18,8 @@ from . import theme
 theme.install()  # ДО остальных импортов: подгоняет «зашитые» цвета интерфейса под выбранную тему
 
 from PySide6.QtCore import (QEasingCurve, QEvent, QFileInfo, QLockFile, QMimeData, QPoint, QPointF,
-                            QPropertyAnimation, QRect, QRectF, Qt, QTimer, QUrl, QVariantAnimation, Signal)
+                            QPropertyAnimation, QRect, QRectF, QSize, Qt, QTimer, QUrl, QVariantAnimation,
+                            Signal)
 from PySide6.QtGui import (QAction, QColor, QConicalGradient, QCursor, QDesktopServices, QDrag,
                            QFont, QFontMetrics, QGuiApplication, QIcon, QPainter, QPainterPath,
                            QPen, QPixmap, QRegion)
@@ -27,8 +28,10 @@ from PySide6.QtWidgets import (QApplication, QFileIconProvider, QGraphicsOpacity
                                QStackedWidget, QSystemTrayIcon, QVBoxLayout, QWidget)
 
 from . import common as C
+from . import icons
 from .mascots import draw_mascot, set_repo_color
 from .island_clip import ClipPage, ClipStore
+from .island_ai import AIPage
 from .island_downloads import DownloadWatcher
 from .island_extras import LyricsEngine, LyricsPage, draw_eq, mix
 from .island_mixer import MixerPage
@@ -56,18 +59,19 @@ HIDE_ZONE_PAD = 120    # насколько зона пробуждения ши
 HIDE_DELAY_TICKS = 10  # сколько тиков (по 60 мс) ждать перед тем, как спрятаться
 BUSY = {"v": False}  # True, пока файл тащат с полки наружу — остров не должен схлопнуться
 
-MODULES = [  # ключ, иконка, название вкладки
-    ("clock", "🕒", "Часы"),
-    ("timer", "⏱", "Таймер"),
-    ("reminders", "🔔", "Напоминания"),
-    ("calc", "🧮", "Калькулятор"),
-    ("system", "📊", "Система"),
-    ("rec", "🎬", "Запись"),
-    ("music", "🎵", "Музыка"),
-    ("mixer", "🎚", "Микшер"),
-    ("clip", "📋", "Буфер"),
-    ("eye", "👁", "Глазок"),
-    ("shelf", "📁", "Полка"),
+MODULES = [  # ключ, название вкладки (значки рисует icons.py)
+    ("clock", "Часы"),
+    ("timer", "Таймер"),
+    ("reminders", "Напоминания"),
+    ("calc", "Калькулятор"),
+    ("ai", "ИИ"),
+    ("system", "Система"),
+    ("rec", "Запись"),
+    ("music", "Музыка"),
+    ("mixer", "Микшер"),
+    ("clip", "Буфер"),
+    ("eye", "Глазок"),
+    ("shelf", "Полка"),
 ]
 
 
@@ -569,9 +573,9 @@ class ShelfPage(QWidget):
 
 # ───────────────────────────── Остров ─────────────────────────────
 TAB_ON = ("QPushButton{background:#1c1c1e;color:#fff;border:none;border-radius:22px;"
-          "padding:0 18px;font-size:16px;font-weight:600}")
-TAB_OFF = ("QPushButton{background:transparent;color:#fff;border:none;border-radius:22px;"
-           "padding:0 9px;font-size:19px}QPushButton:hover{background:#151517}")
+          "padding:0 16px;font-size:15px;font-weight:600}")
+TAB_OFF = ("QPushButton{background:transparent;border:none;border-radius:22px;"
+           "padding:0 9px}QPushButton:hover{background:#151517}")
 
 
 class Island(QWidget):
@@ -655,20 +659,24 @@ class Island(QWidget):
         bar = QHBoxLayout()
         bar.setSpacing(2)
         self.tabs = {}
-        for key, icon, title in MODULES:
+        for key, title in MODULES:
             b = QPushButton()
             b.setFixedHeight(44)
+            b.setIconSize(QSize(21, 21))
+            b.setIcon(icons.icon(key, 21, False))
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.clicked.connect(lambda _=False, k=key: self.show_page(k, animate=True))
-            self.tabs[key] = (b, icon, title)
+            self.tabs[key] = (b, title)
             bar.addWidget(b)
         bar.addStretch()
-        gear = QPushButton("⚙")
+        gear = QPushButton()
         gear.setFixedSize(40, 40)
+        gear.setIconSize(QSize(21, 21))
+        gear.setIcon(icons.icon("gear", 21, False))
         gear.setToolTip("Настройки")
         gear.setCursor(Qt.CursorShape.PointingHandCursor)
-        gear.setStyleSheet("QPushButton{background:transparent;color:#8e8e93;border:none;font-size:22px;"
-                           "border-radius:20px}QPushButton:hover{color:#fff;background:#151517}")
+        gear.setStyleSheet("QPushButton{background:transparent;border:none;border-radius:20px}"
+                           "QPushButton:hover{background:#151517}")
         gear.clicked.connect(self.open_settings)
         bar.addWidget(gear)
         lay.addLayout(bar)
@@ -683,10 +691,12 @@ class Island(QWidget):
         self.lyrics_page.island_toggled.connect(self._on_island_toggled)
         self.clip_page = ClipPage(self.clip)
         self.clip_page.pause_toggled.connect(self._on_clip_pause)
+        self.ai_page = AIPage()
+        self.ai_page.host = self      # инструменты ИИ управляют островом (таймер, музыка, вкладки…)
         self.rec_page = RecordPage(lambda: self.cfg)
         self.rec_page.mode_changed.connect(lambda m: self.set_cfg("rec_mode", m))
         self.pages = {"clock": self.clock_page, "timer": self.timer_page, "reminders": self.rem_page,
-                      "calc": CalcPage(), "system": SystemPage(), "rec": self.rec_page, "music": self.lyrics_page, "mixer": MixerPage(), "clip": self.clip_page,
+                      "calc": CalcPage(), "ai": self.ai_page, "system": SystemPage(), "rec": self.rec_page, "music": self.lyrics_page, "mixer": MixerPage(), "clip": self.clip_page,
                       "eye": EyePage(), "shelf": self.shelf_page}
         for w in self.pages.values():
             self.stack.addWidget(w)
@@ -755,9 +765,10 @@ class Island(QWidget):
             self.reveal.play(snap, origin, self.stack.geometry(), "#8b7cf6" if C.is_black(cols) else cols[0], self.stack)
             if self.banner.isVisible():
                 self.banner.raise_()
-        for k, (b, icon, title) in self.tabs.items():
+        for k, (b, title) in self.tabs.items():
             on = k == key
-            b.setText(f"{icon}  {title}" if on else icon)
+            b.setIcon(icons.icon(k, 21, on))
+            b.setText(title if on else "")
             b.setStyleSheet(TAB_ON if on else TAB_OFF)
 
     def open_settings(self):
@@ -773,7 +784,7 @@ class Island(QWidget):
         mods = self.cfg["modules"]
         self._theme = C.resolve_theme(self.cfg)
         self.downloads.configure(bool(self.cfg.get("downloads_on", True)), self.cfg.get("downloads_dir", ""))
-        for key, (b, _, _) in self.tabs.items():
+        for key, (b, _) in self.tabs.items():
             b.setVisible(mods.get(key, True))
         enabled = [k for k in self.tabs if mods.get(k, True)]
         if enabled and (self.page_key not in enabled):
@@ -1176,7 +1187,9 @@ class Island(QWidget):
         self.downloads.stop()
         for m in self.mirrors.values():
             m.close()
+        self.lyrics.stop()          # поток плеера не должен слать сигналы после закрытия
         self.rec_page.shutdown()
+        self.ai_page.shutdown()
 
     def eventFilter(self, obj, ev):
         if ev.type() == QEvent.Type.MouseButtonPress and self.isVisible() and self.cfg.get("click_ripple", True):
@@ -1382,12 +1395,13 @@ def main():
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ASTRO.DynamicIsland")
         except Exception:
             pass
-    app = QApplication(sys.argv)
+    app = C.qt_app()
     app.setWindowIcon(make_tray_icon())
     app.setQuitOnLastWindowClosed(False)
     app.setFont(QFont("Segoe UI", 10))
 
     C.CFG_DIR.mkdir(parents=True, exist_ok=True)
+    C.clear_stale_lock("island.lock")   # замок от убитого процесса не должен блокировать запуск
     lock = QLockFile(str(C.CFG_DIR / "island.lock"))
     if not lock.tryLock(200):
         return 0  # остров уже запущен
